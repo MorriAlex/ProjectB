@@ -276,12 +276,23 @@ class FileReader:
                 reader = csv.DictReader(f)
                 for row_num, row in enumerate(reader, 1):
                     try:
+                        # Парсим все возможные поля
+                        id_val = row.get('id', f'row_{row_num}')
+                        value_val = row.get('value', '0')
+                        weight_val = row.get('weight', '1.0')
+                        unit_val = row.get('unit', '')
+                        region_val = row.get('region', '')
+                        
+                        # Преобразуем в нужные типы
+                        value = float(value_val) if value_val else 0.0
+                        weight = float(weight_val) if weight_val else 1.0
+                        
                         indicator = Indicator(
-                            id=row.get('id', f'row_{row_num}'),
-                            value=float(row.get('value', 0)),
-                            weight=float(row.get('weight', 1.0)) if row.get('weight') else 1.0,
-                            unit=row.get('unit', ''),
-                            region=row.get('region')
+                            id=id_val,
+                            value=value,
+                            weight=weight,
+                            unit=unit_val,
+                            region=region_val if region_val else None
                         )
                         indicators.append(indicator)
                     except ValueError as e:
@@ -295,10 +306,12 @@ class FileReader:
         path = Path(filepath)
         if path.suffix.lower() == '.csv':
             return FileReader.read_csv(filepath)
+        elif path.suffix.lower() == '.json':
+            return FileReader.read_json(filepath)
         else:
             raise FileReadError(f"Неподдерживаемый формат файла: {path.suffix}")
 
-# ===================== 6. ГРАФИЧЕСКИЙ ИНТЕРФЕЙС (Обновленный, современный стиль) =====================
+# ===================== 6. ГРАФИЧЕСКИЙ ИНТЕРФЕЙС =====================
 
 class MetricsCalculatorGUI:
     def __init__(self, root):
@@ -311,12 +324,12 @@ class MetricsCalculatorGUI:
         self.last_loaded_file = None
         self.last_result = None
         self.current_figure = None
+        self.create_menu()
         self.create_widgets()
 
     def setup_styles(self):
         style = ttk.Style()
         style.theme_use('clam')
-        # Современные цвета
         style.configure('.', background='#2E2E2E', foreground='white')
         style.configure('TLabel', background='#2E2E2E', foreground='white', font=('Helvetica', 11))
         style.configure('Title.TLabel', font=('Helvetica', 16, 'bold'))
@@ -327,6 +340,36 @@ class MetricsCalculatorGUI:
         style.configure('Treeview.Heading', background='#555', foreground='white', font=('Helvetica', 11, 'bold'))
         style.configure('Vertical.TScrollbar', background='#555')
         self.root.configure(bg='#2E2E2E')
+
+    def create_menu(self):
+        menubar = tk.Menu(self.root)
+        self.root.config(menu=menubar)
+        
+        # Меню Файл
+        file_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Файл", menu=file_menu)
+        file_menu.add_command(label="Загрузить CSV...", command=lambda: self.load_from_file('csv'))
+        file_menu.add_command(label="Загрузить JSON...", command=lambda: self.load_from_file('json'))
+        file_menu.add_separator()
+        file_menu.add_command(label="Сохранить данные...", command=self.save_data)
+        file_menu.add_command(label="Экспорт результатов...", command=self.export_results)
+        file_menu.add_separator()
+        file_menu.add_command(label="Выход", command=self.root.quit)
+        
+        # Меню Данные
+        data_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Данные", menu=data_menu)
+        data_menu.add_command(label="Добавить запись", command=self.add_manual_record)
+        data_menu.add_command(label="Удалить выбранное", command=self.delete_selected_record)
+        data_menu.add_command(label="Очистить всё", command=self.clear_all_records)
+        data_menu.add_separator()
+        data_menu.add_command(label="Рассчитать", command=self.calculate_metrics)
+        
+        # Меню Помощь
+        help_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Помощь", menu=help_menu)
+        help_menu.add_command(label="О программе", command=self.show_about)
+        help_menu.add_command(label="Формат CSV", command=self.show_csv_format)
 
     def create_widgets(self):
         # Главное окно с вкладками
@@ -380,7 +423,7 @@ class MetricsCalculatorGUI:
 
     def create_data_input_area(self, parent):
         # Таблица для ручного ввода
-        columns = ['ID', 'Значение', 'Вес', 'Ед.изм']
+        columns = ['ID', 'Значение', 'Вес', 'Ед.изм', 'Регион']
         self.data_tree = ttk.Treeview(parent, columns=columns, show='headings', height=12)
         for col in columns:
             self.data_tree.heading(col, text=col)
@@ -414,13 +457,16 @@ class MetricsCalculatorGUI:
         self.unit_entry.pack(side=tk.LEFT, padx=2)
         self._set_placeholder_color(self.unit_entry, "Ед.изм")
 
+        self.region_entry = ttk.Entry(input_frame, width=10)
+        self.region_entry.pack(side=tk.LEFT, padx=2)
+        self._set_placeholder_color(self.region_entry, "Регион")
+
         # Кнопки
         btns_frame = ttk.Frame(parent)
         btns_frame.pack(fill=tk.X, pady=5)
         ttk.Button(btns_frame, text="Добавить", command=self.add_manual_record).pack(side=tk.LEFT, padx=5)
         ttk.Button(btns_frame, text="Удалить выбранное", command=self.delete_selected_record).pack(side=tk.LEFT, padx=5)
         ttk.Button(btns_frame, text="Очистить всё", command=self.clear_all_records).pack(side=tk.LEFT, padx=5)
-        # Удалена кнопка "Пример данных"
 
     def create_coefficients_area(self, parent):
         # Ввод коэффициентов
@@ -431,14 +477,26 @@ class MetricsCalculatorGUI:
         ttk.Label(parent, text="Дополнительные коэффициенты (ключ=значение):").pack(anchor=tk.W, pady=5)
         self.coeff_text = scrolledtext.ScrolledText(parent, height=6)
         self.coeff_text.pack(fill=tk.BOTH, expand=True)
-        self.coeff_text.insert('1.0', 'custom_coefficent=1.0\nmultiplier=1.0\n\nФормат: ключ=значение')
+        self.coeff_text.insert('1.0', '# Формат: ключ=значение\ncustom_coefficient=1.0\nmultiplier=1.0\n\n# Примеры:\n# previous_period_value=150.0\n# output_value=600.0\n# input_value=200.0')
 
     def create_action_buttons(self, parent):
         btn_frame = ttk.Frame(parent)
         btn_frame.pack(fill=tk.X, padx=5, pady=5)
-        ttk.Button(btn_frame, text="Расчитать", command=self.calculate_metrics).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="Сохранить", command=self.save_data).pack(side=tk.LEFT, padx=5)
-        # Удалена кнопка "История"
+        
+        # Кнопки слева
+        left_btn_frame = ttk.Frame(btn_frame)
+        left_btn_frame.pack(side=tk.LEFT)
+        
+        ttk.Button(left_btn_frame, text="Загрузить CSV", command=lambda: self.load_from_file('csv')).pack(side=tk.LEFT, padx=5)
+        ttk.Button(left_btn_frame, text="Загрузить JSON", command=lambda: self.load_from_file('json')).pack(side=tk.LEFT, padx=5)
+        ttk.Button(left_btn_frame, text="Рассчитать", command=self.calculate_metrics).pack(side=tk.LEFT, padx=5)
+        
+        # Кнопки справа
+        right_btn_frame = ttk.Frame(btn_frame)
+        right_btn_frame.pack(side=tk.RIGHT)
+        
+        ttk.Button(right_btn_frame, text="Сохранить данные", command=self.save_data).pack(side=tk.LEFT, padx=5)
+        ttk.Button(right_btn_frame, text="Экспорт результатов", command=self.export_results).pack(side=tk.LEFT, padx=5)
 
     def create_results_tab(self, parent):
         # Основной текст для вывода результатов
@@ -461,10 +519,13 @@ class MetricsCalculatorGUI:
                 id=values[0],
                 value=float(values[1]),
                 weight=float(values[2]) if values[2] else 1.0,
-                unit=values[3]
+                unit=values[3],
+                region=values[4] if len(values) > 4 and values[4] else None
             )
             indicators.append(indicator)
         coefficients = {}
+        
+        # Базовые коэффициенты
         try:
             if self.prev_value_var.get():
                 coefficients['previous_period_value'] = float(self.prev_value_var.get())
@@ -480,17 +541,22 @@ class MetricsCalculatorGUI:
                 coefficients['input_value'] = float(self.input_value_var.get())
         except:
             pass
-        # Дополнительные коэффициенты
+        
+        # Дополнительные коэффициенты из текстового поля
         coeff_text = self.coeff_text.get('1.0', tk.END)
         for line in coeff_text.split('\n'):
             line = line.strip()
             if line and not line.startswith('#'):
                 if '=' in line:
                     key, value = line.split('=', 1)
+                    key = key.strip()
+                    value = value.strip()
                     try:
-                        coefficients[key.strip()] = float(value.strip())
-                    except:
+                        coefficients[key] = float(value)
+                    except ValueError:
+                        # Пропускаем некорректные значения
                         pass
+        
         return CalculationInput(indicators=indicators, coefficients=coefficients)
 
     def update_data_info(self):
@@ -502,17 +568,24 @@ class MetricsCalculatorGUI:
         try:
             id_val = self.id_entry.get().strip()
             value_val = float(self.value_entry.get())
-            weight_val = float(self.weight_entry.get())
+            weight_val = float(self.weight_entry.get()) if self.weight_entry.get() else 1.0
             unit_val = self.unit_entry.get().strip()
+            region_val = self.region_entry.get().strip()
+            
             if not id_val:
                 messagebox.showwarning("Внимание", "Поле ID не может быть пустым")
                 return
-            self.data_tree.insert('', tk.END, values=(id_val, f"{value_val:.4f}", f"{weight_val:.4f}", unit_val))
+                
+            self.data_tree.insert('', tk.END, values=(id_val, f"{value_val:.4f}", f"{weight_val:.4f}", unit_val, region_val))
+            
+            # Очищаем поля ввода
             self.id_entry.delete(0, tk.END)
             self.value_entry.delete(0, tk.END)
             self.weight_entry.delete(0, tk.END)
             self.weight_entry.insert(0, "1.0")
             self.unit_entry.delete(0, tk.END)
+            self.region_entry.delete(0, tk.END)
+            
             self.update_data_info()
             self.status_label.config(text="Запись добавлена")
         except ValueError:
@@ -535,43 +608,85 @@ class MetricsCalculatorGUI:
             self.update_data_info()
             self.status_label.config(text="Все записи очищены")
 
-    def load_example_data(self):
-        # Удалена функция загрузки примера данных
-        pass
-
-    def load_from_file(self, file_type):
+    def load_from_file(self, file_type=None):
         try:
             filetypes = []
             if file_type == 'csv':
                 filetypes = [("CSV файлы", "*.csv"), ("Все файлы", "*.*")]
-            filename = filedialog.askopenfilename(title="Выберите файл", filetypes=filetypes)
-            if filename:
-                self.last_loaded_file = filename
-                input_data = FileReader.read_file(filename)
-                self.clear_all_records()
-                for indicator in input_data.indicators:
-                    self.data_tree.insert('', tk.END, values=(
-                        indicator.id,
-                        f"{indicator.value:.4f}",
-                        f"{indicator.weight:.4f}",
-                        indicator.unit or ""
-                    ))
-                # Загрузка коэффициентов
+            elif file_type == 'json':
+                filetypes = [("JSON файлы", "*.json"), ("Все файлы", "*.*")]
+            else:
+                filetypes = [("CSV файлы", "*.csv"), ("JSON файлы", "*.json"), ("Все файлы", "*.*")]
+            
+            filename = filedialog.askopenfilename(
+                title="Выберите файл с данными", 
+                filetypes=filetypes
+            )
+            
+            if not filename:
+                return
+                
+            self.last_loaded_file = filename
+            file_ext = Path(filename).suffix.lower()
+            
+            try:
+                if file_ext == '.csv':
+                    input_data = FileReader.read_csv(filename)
+                elif file_ext == '.json':
+                    input_data = FileReader.read_json(filename)
+                else:
+                    messagebox.showerror("Ошибка", f"Неподдерживаемый формат файла: {file_ext}")
+                    return
+            except FileReadError as e:
+                messagebox.showerror("Ошибка чтения файла", str(e))
+                return
+            
+            # Очищаем текущие данные
+            self.clear_all_records()
+            
+            # Загружаем показатели в таблицу
+            for indicator in input_data.indicators:
+                self.data_tree.insert('', tk.END, values=(
+                    indicator.id,
+                    f"{indicator.value:.4f}",
+                    f"{indicator.weight:.4f}" if indicator.weight is not None else "1.0",
+                    indicator.unit or "",
+                    indicator.region or ""
+                ))
+            
+            # Загрузка коэффициентов
+            if input_data.coefficients:
+                # Очищаем текущие коэффициенты
+                self.prev_value_var.set("")
+                self.output_value_var.set("")
+                self.input_value_var.set("")
+                self.coeff_text.delete('1.0', tk.END)
+                
+                # Загружаем специальные коэффициенты
                 if 'previous_period_value' in input_data.coefficients:
                     self.prev_value_var.set(str(input_data.coefficients['previous_period_value']))
                 if 'output_value' in input_data.coefficients:
                     self.output_value_var.set(str(input_data.coefficients['output_value']))
                 if 'input_value' in input_data.coefficients:
                     self.input_value_var.set(str(input_data.coefficients['input_value']))
-                count = self.update_data_info()
-                self.status_label.config(text=f"Файл загружен: {Path(filename).name} ({count} показателей)")
-                self.current_data = input_data
-                if input_data.indicators:
-                    self.calculate_metrics()
-                else:
-                    messagebox.showwarning("Внимание", "Файл не содержит данных для анализа")
-        except FileReadError as e:
-            messagebox.showerror("Ошибка чтения файла", str(e))
+                
+                # Загружаем остальные коэффициенты
+                coeff_text = "# Коэффициенты из файла:\n"
+                for key, value in input_data.coefficients.items():
+                    if key not in ['previous_period_value', 'output_value', 'input_value']:
+                        coeff_text += f"{key}={value}\n"
+                self.coeff_text.insert('1.0', coeff_text)
+            
+            count = self.update_data_info()
+            self.status_label.config(text=f"Файл загружен: {Path(filename).name} ({count} показателей)")
+            self.current_data = input_data
+            
+            # Автоматически запускаем расчет, если есть данные
+            if input_data.indicators:
+                self.calculate_metrics()
+            else:
+                messagebox.showwarning("Внимание", "Файл не содержит данных для анализа")
+                
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось загрузить файл: {e}")
 
@@ -581,6 +696,7 @@ class MetricsCalculatorGUI:
             if not input_data.indicators:
                 messagebox.showwarning("Внимание", "Нет данных для расчёта")
                 return
+                
             self.status_label.config(text="Выполняется расчет...")
             self.root.update()
             result = MetricsCalculator.calculate_all_metrics(input_data)
@@ -593,15 +709,31 @@ class MetricsCalculatorGUI:
 
     def display_results(self, result: CalculationResult):
         self.results_text.delete('1.0', tk.END)
+        
         if not result.success:
             self.results_text.insert('1.0', "❌ РАСЧЁТ НЕ ВЫПОЛНЕН\n\n")
             for error in result.errors:
                 self.results_text.insert(tk.END, f"• {error}\n")
             return
+        
+        # Формируем заголовок
         source_info = ""
         if self.last_loaded_file:
             source_info = f"Источник данных: {Path(self.last_loaded_file).name}\n"
-        output = "Результаты анализа данных:\n\n"
+        timestamp = f"Дата расчёта: {result.timestamp[:19]}\n"
+        
+        output = "=" * 60 + "\n"
+        output += "РЕЗУЛЬТАТЫ АНАЛИЗА ДАННЫХ\n"
+        output += "=" * 60 + "\n\n"
+        output += source_info
+        output += timestamp
+        output += f"Количество показателей: {len(self.get_current_data().indicators)}\n"
+        output += "-" * 60 + "\n\n"
+        
+        # Основные метрики
+        output += "ОСНОВНЫЕ СТАТИСТИЧЕСКИЕ ПОКАЗАТЕЛИ:\n"
+        output += "-" * 40 + "\n"
+        
         main_metrics = [
             'Среднее арифметическое',
             'Средневзвешенное',
@@ -611,53 +743,64 @@ class MetricsCalculatorGUI:
             'Минимальное значение',
             'Максимальное значение',
             'Размах',
-            'Сумма',
-            'Количество показателей'
+            'Сумма'
         ]
+        
         for metric in main_metrics:
             if metric in result.data:
                 value = result.data[metric]
-                if 'Количество' in metric:
-                    output += f"{metric}: {int(value)}\n"
-                else:
-                    output += f"{metric}: {value:.6f}\n"
-        output += "\nДополнительные рассчёты:\n"
+                output += f"• {metric:<25}: {value:>15.6f}\n"
+        
+        output += "\n" + "-" * 60 + "\n\n"
+        output += "ДОПОЛНИТЕЛЬНЫЕ РАСЧЁТЫ:\n"
+        output += "-" * 40 + "\n"
+        
         additional_metrics = [
             'Темп роста, %',
             'Коэффициент эффективности',
             'Доля каждого показателя, %'
         ]
+        
         for metric in additional_metrics:
             if metric in result.data:
                 value = result.data[metric]
                 if 'Темп роста' in metric:
-                    output += f"{metric}: {value:+.4f}%\n"
+                    output += f"• {metric:<25}: {value:>+15.4f}%\n"
                 elif 'Доля' in metric:
-                    output += f"{metric}: {value:.4f}%\n"
+                    output += f"• {metric:<25}: {value:>15.4f}%\n"
                 else:
-                    output += f"{metric}: {value:.6f}\n"
+                    output += f"• {metric:<25}: {value:>15.6f}\n"
+        
         # Ошибки и предупреждения
         if result.errors:
-            output += "\n⚠️ ОШИБКИ:\n"
-            output += "═" * 60 + "\n"
+            output += "\n" + "=" * 60 + "\n"
+            output += "⚠️  ОШИБКИ:\n"
+            output += "-" * 40 + "\n"
             for error in result.errors:
                 output += f"• {error}\n"
+        
         if result.warnings:
-            output += "\nℹ️ ПРЕДУПРЕЖДЕНИЯ:\n"
-            output += "═" * 60 + "\n"
+            output += "\n" + "=" * 60 + "\n"
+            output += "ℹ️  ПРЕДУПРЕЖДЕНИЯ:\n"
+            output += "-" * 40 + "\n"
             for warning in result.warnings:
                 output += f"• {warning}\n"
+        
+        output += "\n" + "=" * 60
+        
         self.last_result = result
         self.current_data = self.get_current_data()
         self.results_text.insert('1.0', output)
 
     def save_to_history(self, result: CalculationResult, input_data: CalculationInput):
-        # История не реализована
-        pass
-
-    def update_history_display(self):
-        # История не реализована
-        pass
+        history_entry = {
+            'timestamp': result.timestamp,
+            'input_count': len(input_data.indicators),
+            'result': result.data,
+            'errors': result.errors,
+            'warnings': result.warnings
+        }
+        self.calculation_history.append(history_entry)
 
     def copy_results(self):
         text = self.results_text.get('1.0', tk.END)
@@ -672,49 +815,111 @@ class MetricsCalculatorGUI:
             self.status_label.config(text="Результаты очищены")
 
     def save_data(self):
-        # Экспорт только в CSV
         try:
             filename = filedialog.asksaveasfilename(
                 defaultextension=".csv",
-                filetypes=[("CSV файлы", "*.csv")]
+                filetypes=[("CSV файлы", "*.csv"), ("JSON файлы", "*.json")]
             )
             if filename:
                 input_data = self.get_current_data()
-                with open(filename, 'w', encoding='utf-8', newline='') as f:
-                    writer = csv.writer(f)
-                    writer.writerow(['id', 'value', 'weight', 'unit', 'region'])
-                    for ind in input_data.indicators:
-                        writer.writerow([ind.id, ind.value, ind.weight, ind.unit or "", ind.region or ""])
+                file_ext = Path(filename).suffix.lower()
+                
+                if file_ext == '.json':
+                    # Сохранение в JSON
+                    data_to_save = {
+                        'indicators': [
+                            {
+                                'id': ind.id,
+                                'value': ind.value,
+                                'weight': ind.weight,
+                                'unit': ind.unit,
+                                'region': ind.region
+                            } for ind in input_data.indicators
+                        ],
+                        'coefficients': input_data.coefficients
+                    }
+                    with open(filename, 'w', encoding='utf-8') as f:
+                        json.dump(data_to_save, f, ensure_ascii=False, indent=2)
+                else:
+                    # Сохранение в CSV (по умолчанию)
+                    with open(filename, 'w', encoding='utf-8', newline='') as f:
+                        writer = csv.writer(f)
+                        writer.writerow(['id', 'value', 'weight', 'unit', 'region'])
+                        for ind in input_data.indicators:
+                            writer.writerow([ind.id, ind.value, ind.weight, ind.unit or "", ind.region or ""])
+                
                 self.status_label.config(text=f"Данные сохранены: {Path(filename).name}")
         except Exception as e:
             messagebox.showerror("Ошибка сохранения", str(e))
 
     def export_results(self):
-        # Экспорт только в CSV
-        if not hasattr(self, 'last_result'):
+        if not hasattr(self, 'last_result') or not self.last_result:
             messagebox.showwarning("Внимание", "Нет результатов для экспорта")
             return
         try:
             filename = filedialog.asksaveasfilename(
                 defaultextension=".csv",
-                filetypes=[("CSV файлы", "*.csv")]
+                filetypes=[("CSV файлы", "*.csv"), ("JSON файлы", "*.json")]
             )
             if filename:
-                with open(filename, 'w', encoding='utf-8', newline='') as f:
-                    writer = csv.writer(f)
-                    writer.writerow(['Показатель', 'Значение'])
-                    for key, value in self.last_result.data.items():
-                        writer.writerow([key, value])
+                file_ext = Path(filename).suffix.lower()
+                
+                if file_ext == '.json':
+                    # Экспорт в JSON
+                    data_to_save = {
+                        'timestamp': self.last_result.timestamp,
+                        'source_file': str(self.last_loaded_file) if self.last_loaded_file else None,
+                        'results': self.last_result.data,
+                        'errors': self.last_result.errors,
+                        'warnings': self.last_result.warnings
+                    }
+                    with open(filename, 'w', encoding='utf-8') as f:
+                        json.dump(data_to_save, f, ensure_ascii=False, indent=2)
+                else:
+                    # Экспорт в CSV (по умолчанию)
+                    with open(filename, 'w', encoding='utf-8', newline='') as f:
+                        writer = csv.writer(f)
+                        writer.writerow(['Показатель', 'Значение'])
+                        for key, value in self.last_result.data.items():
+                            writer.writerow([key, value])
+                
                 self.status_label.config(text=f"Результаты экспортированы: {Path(filename).name}")
         except Exception as e:
             messagebox.showerror("Ошибка экспорта", str(e))
 
-    def load_history(self):
-        # История не реализована
-        pass
+    def show_about(self):
+        messagebox.showinfo("О программе", 
+            "Модуль расчёта показателей\n"
+            "Версия 2.0\n\n"
+            "Функции:\n"
+            "• Загрузка данных из CSV и JSON файлов\n"
+            "• Ручной ввод данных\n"
+            "• Расчёт статистических показателей\n"
+            "• Экспорт результатов\n\n"
+            "Поддерживаемые форматы:\n"
+            "• CSV (id,value,weight,unit,region)\n"
+            "• JSON (структурированный формат)")
+
+    def show_csv_format(self):
+        csv_example = """Пример CSV файла:
+
+id,value,weight,unit,region
+показатель1,100.5,1.0,шт.,Москва
+показатель2,200.3,2.0,шт.,Санкт-Петербург
+показатель3,150.7,1.5,шт.,Новосибирск
+показатель4,180.2,1.0,шт.,Екатеринбург
+
+Минимальный формат:
+id,value
+тест1,100
+тест2,200
+тест3,150
+
+Все поля, кроме id и value, опциональны."""
+        
+        messagebox.showinfo("Формат CSV файла", csv_example)
 
     def _set_placeholder_color(self, entry, placeholder):
-        # Установка чёрного цвета для текста-плейсхолдера
         def on_focus_in(event):
             if entry.get() == placeholder:
                 entry.delete(0, tk.END)
@@ -755,6 +960,7 @@ def run_tests():
     print("=" * 60)
     print("ТЕСТИРОВАНИЕ МОДУЛЯ")
     print("=" * 60)
+    
     # Тестовые данные
     test_indicators = [
         Indicator(id="test1", value=100.0, weight=1.0),
@@ -769,15 +975,18 @@ def run_tests():
             'input_value': 200.0
         }
     )
+    
     print("\n1. Созданы тестовые данные")
     for ind in test_indicators:
         print(f"   {ind.id}: {ind.value} (вес: {ind.weight})")
+    
     print("\n2. Валидация данных")
     try:
         DataValidator.validate_input_data(test_input)
         print("   ✓ Валидация прошла успешно")
     except ValidationError as e:
         print(f"   ✗ Валидация не прошла: {e}")
+    
     print("\n3. Расчет")
     result = MetricsCalculator.calculate_all_metrics(test_input)
     if result.success:
@@ -788,25 +997,57 @@ def run_tests():
         print("   ✗ Есть ошибки")
         for err in result.errors:
             print(f"   {err}")
-    # Тест чтения файла
+    
+    # Тест чтения CSV файла
     import tempfile
+    print("\n4. Тест чтения CSV файла")
+    
     test_csv_content = [
         ['id', 'value', 'weight', 'unit', 'region'],
-        ['item1', '100', '1.0', 'шт.', 'Region1'],
-        ['item2', '200', '2.0', 'шт.', 'Region2']
+        ['item1', '100.5', '1.0', 'шт.', 'Москва'],
+        ['item2', '200.3', '2.0', 'шт.', 'Санкт-Петербург']
     ]
+    
     with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False, encoding='utf-8') as f:
         writer = csv.writer(f)
         writer.writerows(test_csv_content)
         csv_path = f.name
+    
     try:
         loaded = FileReader.read_csv(csv_path)
         print(f"   ✓ Прочитан CSV: {len(loaded.indicators)} показателей")
         for ind in loaded.indicators:
-            print(f"     {ind.id}, region: {ind.region}")
+            print(f"     {ind.id}: {ind.value}, регион: {ind.region}")
     except Exception as e:
         print(f"   ✗ Ошибка чтения CSV: {e}")
+    
     os.remove(csv_path)
+    
+    print("\n5. Тест чтения JSON файла")
+    test_json_content = {
+        'indicators': [
+            {'id': 'json1', 'value': 150, 'weight': 1.0, 'unit': 'шт.', 'region': 'Москва'},
+            {'id': 'json2', 'value': 250, 'weight': 2.0, 'unit': 'шт.', 'region': 'СПб'}
+        ],
+        'coefficients': {
+            'previous_period_value': 100,
+            'multiplier': 1.5
+        }
+    }
+    
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as f:
+        json.dump(test_json_content, f)
+        json_path = f.name
+    
+    try:
+        loaded = FileReader.read_json(json_path)
+        print(f"   ✓ Прочитан JSON: {len(loaded.indicators)} показателей")
+        print(f"     Коэффициенты: {len(loaded.coefficients)} шт.")
+    except Exception as e:
+        print(f"   ✗ Ошибка чтения JSON: {e}")
+    
+    os.remove(json_path)
+    
     print("=" * 60)
     print("ТЕСТЫ ЗАВЕРШЕНЫ")
     print("=" * 60)
